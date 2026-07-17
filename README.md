@@ -1,7 +1,9 @@
 # Drop Day
 
 A flash-sale storefront for limited-stock product drops. Hold an item to reserve
-stock for **60 seconds**, race the timer (and the bots), then check out.
+stock for **60 seconds**, race the timer (and the bots), then check out. Miss out?
+Join a sold-out item's waitlist and get an exclusive **15-second second-chance**
+when stock frees up.
 
 > Dark _terminal-meets-hypebeast_ look, monospace live tickers, and a server-side
 > engine that is the single source of truth for everything time-based and contested.
@@ -45,13 +47,15 @@ Browser (client components)
        │                          │
        ▼   (HTTP + latency + occasional transient failures)
   Route Handlers  /api/products · /api/holds · /api/holds/[id] · /api/checkout
+                  /api/queue · /api/queue/claim
        │                          │
        ▼                          │
   src/lib/engine.ts  ── in-memory source of truth (on globalThis)
        • lazy sweep() enforces 60s hold expiry on every read/mutation
        • simulateContention() — bots eat live stock over time
        • driftWatchers() — hype meter drifts
-       • available = totalStock − soldToSim − currentlyHeld
+       • FIFO second-chance queue + 15s exclusive offers (escrow one unit)
+       • available = totalStock − soldToSim − currentlyHeld − offerReserved
 ```
 
 ### Layers
@@ -77,10 +81,22 @@ Browser (client components)
 - **Never a silent vanish.** When a hold expires, the poll diff removes it and
   fires a "returned to the pool" toast. Panic mode (red + shake) covers the final
   10 seconds; at 0 the timer reads **Expired** briefly before reconciliation.
-- **Two wildcards:** _Panic Mode_ hold timers and a live _Hype Meter_ (watchers +
-  "Hyped" glow) on each card.
-- **Cross-tab:** `holdIds` live in `localStorage`; a `storage` listener re-syncs
-  and reconciles when another tab changes them. The server stays authoritative.
+- **Second-Chance Queue.** Join a waitlist for a sold-out product. When stock
+  frees up (a hold expires/releases), the front-of-queue user gets an **exclusive
+  15-second offer** — that unit is escrowed (kept out of public stock) until they
+  claim it into a normal 60s hold or the window lapses. Unclaimed offers drop the
+  user from the queue and pass the unit to the next person, or back to public
+  stock if the queue is empty. The 15s window is **enforced by the engine**, in
+  the same lazy sweep as hold expiry — never by the UI.
+- **Wildcards:** _Panic Mode_ hold timers, a live _Hype Meter_ (watchers +
+  "Hyped" glow), and the _Second-Chance Queue_ above.
+- **Micro-interactions (motion-safe):** product-card hover lift + accent glow,
+  holds that slide in and fade out (instead of vanishing), a skeleton-shimmer
+  loading grid, and a gentle per-second pulse on live countdowns. All degrade to
+  static under `prefers-reduced-motion`.
+- **Cross-tab:** `holdIds` (and a stable per-browser `userId` for the queue) live
+  in `localStorage`; a `storage` listener re-syncs and reconciles when another tab
+  changes them. The server stays authoritative.
 
 Accessibility: respects `prefers-reduced-motion`, visible keyboard focus, and
 `aria-live` regions for toasts and panic countdowns.
