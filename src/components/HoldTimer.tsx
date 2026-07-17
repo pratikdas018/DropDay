@@ -23,6 +23,8 @@ export function HoldTimer({ hold }: { hold: Hold }) {
     );
   }
 
+  const label = fmtCountdown(msLeft);
+
   return (
     <span
       className={`font-mono text-sm tabular-nums ${
@@ -31,7 +33,10 @@ export function HoldTimer({ hold }: { hold: Hold }) {
       aria-live={panic ? "assertive" : "off"}
     >
       <span className={panic ? "inline-block motion-safe:animate-shake" : ""}>
-        {fmtCountdown(msLeft)}
+        {/* key on the label so each new second remounts and re-fires the pulse */}
+        <span key={label} className="inline-block motion-safe:animate-tickPulse">
+          {label}
+        </span>
       </span>
     </span>
   );

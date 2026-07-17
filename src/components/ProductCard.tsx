@@ -1,7 +1,9 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import { fmtCountdown, useServerTick } from "@/lib/clock";
 import { useStore } from "@/store/useStore";
+import { OFFER_DURATION_MS } from "@/lib/types";
 import type { Product } from "@/lib/types";
 
 const HYPE_THRESHOLD = 300; // watchers above this = "Hyped"
@@ -17,7 +19,7 @@ function Swatch({ colorway, hyped }: { colorway: string; hyped: boolean }) {
       }}
       aria-hidden
     >
-      <div className="absolute inset-0 bg-[linear-gradient(120deg,transparent_40%,rgba(255,255,255,0.08)_50%,transparent_60%)]" />
+      <div className="absolute inset-0 bg-[linear-gradient(120deg,transparent_40%,rgba(255,255,255,0.08)_50%,transparent_60%)] transition-transform duration-500 ease-out motion-safe:group-hover:translate-x-1/4" />
     </div>
   );
 }
@@ -37,6 +39,101 @@ function StockBar({ available, total }: { available: number; total: number }) {
   );
 }
 
+/**
+ * The urgent "Claim now" state shown when THIS user holds the active 15s offer.
+ * The authoritative deadline lives on the server (offerSecondsLeft, refreshed by
+ * polling); we anchor a local deadline and tick it down smoothly between polls.
+ */
+function OfferPanel({ product }: { product: Product }) {
+  const nowMs = useServerTick(250);
+  const claimOffer = useStore((s) => s.claimOffer);
+  const pendingQueueFor = useStore((s) => s.pendingQueueFor);
+  const serverSeconds = product.queue?.offerSecondsLeft ?? 0;
+
+  // Anchor a local deadline; re-anchor whenever the server's value jumps up
+  // (fresh offer) so a re-offer on a later queue turn restarts cleanly.
+  const deadlineRef = useRef<number>(0);
+  const lastServerRef = useRef<number>(0);
+  if (serverSeconds > lastServerRef.current) {
+    deadlineRef.current = nowMs + serverSeconds * 1000;
+  }
+  lastServerRef.current = serverSeconds;
+
+  const msLeft = Math.max(0, Math.min(deadlineRef.current - nowMs, OFFER_DURATION_MS));
+  const secondsLeft = Math.ceil(msLeft / 1000);
+  const claiming = pendingQueueFor === product.id;
+
+  return (
+    <div className="mt-1 flex flex-col gap-2 rounded-lg border border-ember/60 bg-ember/10 p-3 shadow-glow-ember motion-safe:animate-glowPulse">
+      <div className="flex items-center justify-between">
+        <span className="font-mono text-[11px] font-semibold uppercase tracking-wider text-ember">
+          🎟️ Your turn — claim now
+        </span>
+        <span
+          key={secondsLeft}
+          className="font-mono text-lg font-bold tabular-nums text-ember motion-safe:animate-tickPulse"
+          aria-live="assertive"
+        >
+          {secondsLeft}s
+        </span>
+      </div>
+      <button
+        type="button"
+        disabled={claiming || secondsLeft <= 0}
+        onClick={() => claimOffer(product.id)}
+        className="rounded-lg border border-ember/70 bg-ember/20 px-3 py-2 font-mono text-sm font-semibold text-ember transition hover:bg-ember/30 disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        {claiming ? "Claiming…" : "Claim your unit"}
+      </button>
+    </div>
+  );
+}
+
+/** Join / leave waitlist controls + position, shown on a sold-out card. */
+function WaitlistControls({ product }: { product: Product }) {
+  const joinQueue = useStore((s) => s.joinQueue);
+  const leaveQueue = useStore((s) => s.leaveQueue);
+  const pendingQueueFor = useStore((s) => s.pendingQueueFor);
+  const q = product.queue;
+  const busy = pendingQueueFor === product.id;
+  const queued = q?.queued ?? false;
+
+  return (
+    <div className="mt-1 flex flex-col gap-2">
+      {queued ? (
+        <>
+          <div className="flex items-center justify-between font-mono text-[11px] text-muted">
+            <span className="text-ice">In line · #{q?.position ?? "?"}</span>
+            <span>{q?.length ?? 0} waiting</span>
+          </div>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => leaveQueue(product.id)}
+            className="rounded-lg border border-edge bg-ink px-3 py-2 font-mono text-sm text-muted transition hover:border-muted/60 hover:text-chalk disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {busy ? "Leaving…" : "Leave waitlist"}
+          </button>
+        </>
+      ) : (
+        <>
+          {(q?.length ?? 0) > 0 && (
+            <span className="font-mono text-[11px] text-muted">{q?.length} waiting</span>
+          )}
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => joinQueue(product.id)}
+            className="rounded-lg border border-ice/50 bg-ice/10 px-3 py-2 font-mono text-sm font-semibold text-ice transition hover:bg-ice/20 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {busy ? "Joining…" : "Join waitlist"}
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function ProductCard({ product }: { product: Product }) {
   const nowMs = useServerTick(1000);
   const placeHold = useStore((s) => s.placeHold);
@@ -51,7 +148,7 @@ export function ProductCard({ product }: { product: Product }) {
 
   return (
     <div
-      className={`flex flex-col gap-3 rounded-xl border bg-panel p-4 transition ${
+      className={`group flex flex-col gap-3 rounded-xl border bg-panel p-4 transition duration-200 ease-out will-change-transform motion-safe:hover:-translate-y-1 hover:border-volt/40 hover:shadow-glow-volt ${
         hyped ? "border-ember/40 animate-glowPulse" : "border-edge"
       }`}
     >
@@ -107,12 +204,21 @@ export function ProductCard({ product }: { product: Product }) {
             Drops in
           </span>
           <span className="font-mono text-2xl tabular-nums text-ice">
-            {fmtCountdown(msToDrop)}
+            <span
+              key={fmtCountdown(msToDrop)}
+              className="inline-block motion-safe:animate-tickPulse"
+            >
+              {fmtCountdown(msToDrop)}
+            </span>
           </span>
         </div>
       )}
 
-      {product.status === "live" && (
+      {/* An active Second-Chance offer for THIS user takes over the footer with
+          an urgent claim state, regardless of the public status. */}
+      {product.queue?.hasOffer && <OfferPanel product={product} />}
+
+      {!product.queue?.hasOffer && product.status === "live" && (
         <div className="mt-1 flex flex-col gap-2">
           <div className="flex items-center justify-between">
             <span
@@ -136,16 +242,10 @@ export function ProductCard({ product }: { product: Product }) {
         </div>
       )}
 
-      {product.status === "sold_out" && (
+      {!product.queue?.hasOffer && product.status === "sold_out" && (
         <div className="mt-1 flex flex-col gap-2">
           <span className="font-mono text-sm text-muted">Sold out</span>
-          <button
-            type="button"
-            disabled
-            className="mt-1 cursor-not-allowed rounded-lg border border-edge bg-ink px-3 py-2 font-mono text-sm text-muted opacity-60"
-          >
-            Unavailable
-          </button>
+          <WaitlistControls product={product} />
         </div>
       )}
     </div>

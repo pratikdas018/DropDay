@@ -36,6 +36,20 @@ export default function StorefrontPage() {
         </div>
       </main>
 
+      <footer className="mx-auto max-w-7xl px-4 pb-8 pt-2 sm:px-6">
+        <p className="font-mono text-[11px] text-muted">
+          Built by Pratik Ch: Das ·{" "}
+          <a
+            href="https://pratik-web.vercel.app/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline-offset-2 transition hover:text-chalk hover:underline"
+          >
+            Portfolio
+          </a>
+        </p>
+      </footer>
+
       <Toasts />
     </>
   );

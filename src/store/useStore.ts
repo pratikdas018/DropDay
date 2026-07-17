@@ -15,6 +15,7 @@ import { api, ApiFailure } from "@/lib/api";
 import type { Hold, Product } from "@/lib/types";
 
 const HOLD_IDS_KEY = "dropday.holdIds";
+const USER_ID_KEY = "dropday.userId";
 
 export type ProductsState = "idle" | "loading" | "ready" | "error";
 
@@ -42,6 +43,13 @@ interface StoreState {
   /** productId currently awaiting a placeHold response (wait-for-server). */
   pendingHoldFor: string | null;
 
+  /** Stable per-browser identity for the Second-Chance Queue. */
+  userId: string;
+  /** productId currently awaiting a join/leave/claim response. */
+  pendingQueueFor: string | null;
+  /** productIds for which we've already toasted the current active offer (de-dupe). */
+  offeredProductIds: string[];
+
   // time
   serverTime: () => number;
   applyDrift: (serverNow: number) => void;
@@ -54,6 +62,11 @@ interface StoreState {
   placeHold: (productId: string, qty?: number) => Promise<void>;
   releaseHold: (id: string) => Promise<void>;
   refreshHolds: () => Promise<void>;
+
+  // second-chance queue
+  joinQueue: (productId: string) => Promise<void>;
+  leaveQueue: (productId: string) => Promise<void>;
+  claimOffer: (productId: string) => Promise<void>;
 
   // toasts
   pushToast: (kind: ToastKind, message: string) => void;
@@ -90,6 +103,60 @@ function uid(): string {
   return Math.random().toString(36).slice(2, 10);
 }
 
+/**
+ * Stable per-browser id for the Second-Chance Queue (no auth). Persisted so the
+ * same identity is used across polls, tabs, and reloads. Reused as the single
+ * "user" for both queue membership and offers.
+ */
+function readOrCreateUserId(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    const existing = window.localStorage.getItem(USER_ID_KEY);
+    if (existing) return existing;
+    const created = `u_${uid()}${uid()}`;
+    window.localStorage.setItem(USER_ID_KEY, created);
+    return created;
+  } catch {
+    // Privacy mode / no storage: fall back to an ephemeral in-memory id.
+    return `u_${uid()}${uid()}`;
+  }
+}
+
+/**
+ * After each products response, detect the transition into "you have an active
+ * offer" and fire a prominent toast exactly once per offer. De-dupe via
+ * offeredProductIds; clear the marker when the offer is gone so the NEXT offer
+ * (e.g. a later turn in the queue) notifies again.
+ */
+function reconcileOffers(
+  get: () => StoreState,
+  set: (partial: Partial<StoreState>) => void,
+  products: Product[],
+): void {
+  const already = get().offeredProductIds;
+  const withOffer = products
+    .filter((p) => p.queue?.hasOffer && (p.queue?.offerSecondsLeft ?? 0) > 0)
+    .map((p) => p.id);
+
+  // New offers we haven't toasted yet.
+  const fresh = withOffer.filter((id) => !already.includes(id));
+  for (const id of fresh) {
+    const p = products.find((x) => x.id === id);
+    if (p) {
+      get().pushToast(
+        "success",
+        `🎟️ Your turn! ${p.name} is reserved for you — claim within 15s.`,
+      );
+    }
+  }
+
+  // Drop markers for products where the offer is no longer active.
+  const next = [...already.filter((id) => withOffer.includes(id)), ...fresh];
+  const changed =
+    next.length !== already.length || next.some((id, i) => id !== already[i]);
+  if (changed) set({ offeredProductIds: next });
+}
+
 export const useStore = create<StoreState>((set, get) => ({
   products: [],
   productsState: "idle",
@@ -104,6 +171,10 @@ export const useStore = create<StoreState>((set, get) => ({
 
   pendingHoldFor: null,
 
+  userId: readOrCreateUserId(),
+  pendingQueueFor: null,
+  offeredProductIds: [],
+
   // -- time -----------------------------------------------------------------
   serverTime: () => Date.now() + get().drift,
 
@@ -115,9 +186,10 @@ export const useStore = create<StoreState>((set, get) => ({
   loadProducts: async () => {
     set({ productsState: "loading", productsError: null });
     try {
-      const { data, serverNow } = await api.getProducts();
+      const { data, serverNow } = await api.getProducts(get().userId);
       get().applyDrift(serverNow);
       set({ products: data, productsState: "ready", productsError: null });
+      reconcileOffers(get, set, data);
     } catch (err) {
       const message = err instanceof ApiFailure ? err.message : "Failed to load drops.";
       set({ productsState: "error", productsError: message });
@@ -127,9 +199,10 @@ export const useStore = create<StoreState>((set, get) => ({
   // Background poll: never flips the UI into a full-screen error/loading state.
   pollProducts: async () => {
     try {
-      const { data, serverNow } = await api.getProducts();
+      const { data, serverNow } = await api.getProducts(get().userId);
       get().applyDrift(serverNow);
       set({ products: data, productsState: "ready", productsError: null });
+      reconcileOffers(get, set, data);
     } catch {
       // Transient poll failure: keep showing last-known-good data silently.
     }
@@ -222,6 +295,78 @@ export const useStore = create<StoreState>((set, get) => ({
       set({ holds: alive, holdIds: nextIds });
     } catch {
       // Transient refresh failure: leave holds as-is; next tick reconciles.
+    }
+  },
+
+  // -- second-chance queue --------------------------------------------------
+
+  joinQueue: async (productId: string) => {
+    if (get().pendingQueueFor) return;
+    set({ pendingQueueFor: productId });
+    const name = get().products.find((p) => p.id === productId)?.name ?? "this drop";
+    try {
+      const { data, serverNow } = await api.joinQueue(productId, get().userId);
+      get().applyDrift(serverNow);
+      get().pushToast(
+        "success",
+        `On the waitlist for ${name} — you're #${data.position ?? "?"} of ${data.length}.`,
+      );
+    } catch (err) {
+      const label =
+        err instanceof ApiFailure && err.code === "NOT_SOLD_OUT"
+          ? "That drop isn't sold out — just hold it."
+          : "Couldn't join the waitlist — try again.";
+      get().pushToast("error", label);
+    } finally {
+      set({ pendingQueueFor: null });
+      void get().pollProducts();
+    }
+  },
+
+  leaveQueue: async (productId: string) => {
+    if (get().pendingQueueFor) return;
+    set({ pendingQueueFor: productId });
+    const name = get().products.find((p) => p.id === productId)?.name ?? "this drop";
+    try {
+      const { serverNow } = await api.leaveQueue(productId, get().userId);
+      get().applyDrift(serverNow);
+      // Clear any offer-toast de-dupe marker so a future offer re-notifies.
+      set((s) => ({
+        offeredProductIds: s.offeredProductIds.filter((id) => id !== productId),
+      }));
+      get().pushToast("info", `Left the waitlist for ${name}.`);
+    } catch {
+      get().pushToast("error", "Couldn't leave the waitlist — try again.");
+    } finally {
+      set({ pendingQueueFor: null });
+      void get().pollProducts();
+    }
+  },
+
+  // Claim the exclusive offer → becomes a normal 60s hold (folded into holds).
+  claimOffer: async (productId: string) => {
+    if (get().pendingQueueFor) return;
+    set({ pendingQueueFor: productId });
+    try {
+      const { data: hold, serverNow } = await api.claimOffer(productId, get().userId);
+      get().applyDrift(serverNow);
+      const nextIds = [...get().holdIds, hold.id];
+      writeHoldIds(nextIds);
+      set((s) => ({
+        holdIds: nextIds,
+        holds: [...s.holds, hold],
+        offeredProductIds: s.offeredProductIds.filter((id) => id !== productId),
+      }));
+      get().pushToast("success", `Claimed ${hold.productName}! 60s to check out.`);
+    } catch (err) {
+      const label =
+        err instanceof ApiFailure && err.code === "NO_OFFER"
+          ? "Your reservation window passed — back in the pool."
+          : "Claim failed — please try again.";
+      get().pushToast("error", label);
+    } finally {
+      set({ pendingQueueFor: null });
+      void get().pollProducts();
     }
   },
 

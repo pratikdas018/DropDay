@@ -6,7 +6,27 @@
 
 export const HOLD_DURATION_MS = 60_000;
 
+/** Second-Chance Queue: exclusive window to claim freed stock before it goes public. */
+export const OFFER_DURATION_MS = 15_000;
+
 export type ProductStatus = "dropping_soon" | "live" | "sold_out";
+
+/**
+ * Per-user, per-product Second-Chance Queue state. This is what a given user
+ * sees about a product's waitlist — never the whole queue, just their standing.
+ */
+export interface QueueInfo {
+  /** Total people waiting in this product's queue. */
+  length: number;
+  /** Is the requesting user currently in this queue (waiting, no active offer)? */
+  queued: boolean;
+  /** 1-based position in the queue if queued (front = 1); null otherwise. */
+  position: number | null;
+  /** Does the requesting user hold the active 15s exclusive offer right now? */
+  hasOffer: boolean;
+  /** Whole seconds left on that offer (0 when none). */
+  offerSecondsLeft: number;
+}
 
 export interface Product {
   id: string;
@@ -18,11 +38,13 @@ export interface Product {
   /** Epoch ms when the drop goes live. */
   dropsAt: number;
   totalStock: number;
-  /** Derived server-side: totalStock − soldToSimShoppers − currentlyHeld. */
+  /** Derived server-side: totalStock − soldToSimShoppers − currentlyHeld − offerReserved. */
   available: number;
   /** Live hype-meter count; drifts over time. */
   watchers: number;
   status: ProductStatus;
+  /** Second-Chance Queue standing for the requesting user (present when a userId is supplied). */
+  queue?: QueueInfo;
 }
 
 export interface Hold {
@@ -61,7 +83,10 @@ export type ApiErrorCode =
   | "HOLD_NOT_FOUND"
   | "NOT_LIVE"
   | "TRANSIENT"
-  | "EMPTY_CART";
+  | "EMPTY_CART"
+  | "NO_OFFER"
+  | "NOT_SOLD_OUT"
+  | "BAD_REQUEST";
 
 export interface ApiError {
   error: string;

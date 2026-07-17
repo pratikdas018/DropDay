@@ -12,6 +12,7 @@ import type {
   Hold,
   Order,
   Product,
+  QueueInfo,
 } from "./types";
 
 /** Point this at a real backend to swap it out. Empty = same-origin routes. */
@@ -84,8 +85,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<ApiResult<T
 }
 
 export const api = {
-  getProducts(): Promise<ApiResult<Product[]>> {
-    return request<Product[]>("/api/products", { method: "GET" });
+  getProducts(userId?: string): Promise<ApiResult<Product[]>> {
+    const qs = userId ? `?userId=${encodeURIComponent(userId)}` : "";
+    return request<Product[]>(`/api/products${qs}`, { method: "GET" });
   },
 
   placeHold(productId: string, qty: number): Promise<ApiResult<Hold>> {
@@ -111,6 +113,29 @@ export const api = {
     return request<Order>("/api/checkout", {
       method: "POST",
       body: JSON.stringify({ holdIds }),
+    });
+  },
+
+  // -- Second-Chance Queue --------------------------------------------------
+
+  joinQueue(productId: string, userId: string): Promise<ApiResult<QueueInfo>> {
+    return request<QueueInfo>("/api/queue", {
+      method: "POST",
+      body: JSON.stringify({ productId, userId }),
+    });
+  },
+
+  leaveQueue(productId: string, userId: string): Promise<ApiResult<QueueInfo>> {
+    return request<QueueInfo>("/api/queue", {
+      method: "DELETE",
+      body: JSON.stringify({ productId, userId }),
+    });
+  },
+
+  claimOffer(productId: string, userId: string): Promise<ApiResult<Hold>> {
+    return request<Hold>("/api/queue/claim", {
+      method: "POST",
+      body: JSON.stringify({ productId, userId }),
     });
   },
 };

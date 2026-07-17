@@ -38,6 +38,23 @@ const config: Config = {
           "0%": { transform: "translateY(12px)", opacity: "0" },
           "100%": { transform: "translateY(0)", opacity: "1" },
         },
+        slideInHold: {
+          "0%": { transform: "translateY(-8px) scale(0.98)", opacity: "0" },
+          "100%": { transform: "translateY(0) scale(1)", opacity: "1" },
+        },
+        fadeOutHold: {
+          "0%": { transform: "translateY(0) scale(1)", opacity: "1" },
+          "100%": { transform: "translateY(-6px) scale(0.98)", opacity: "0" },
+        },
+        shimmer: {
+          "0%": { transform: "translateX(-100%)" },
+          "100%": { transform: "translateX(100%)" },
+        },
+        tickPulse: {
+          "0%": { opacity: "0.72" },
+          "18%": { opacity: "1" },
+          "100%": { opacity: "1" },
+        },
         glowPulse: {
           "0%, 100%": { boxShadow: "0 0 0 1px rgba(255,90,54,0.25), 0 0 14px -6px rgba(255,90,54,0.35)" },
           "50%": { boxShadow: "0 0 0 1px rgba(255,90,54,0.5), 0 0 26px -4px rgba(255,90,54,0.6)" },
@@ -48,6 +65,10 @@ const config: Config = {
         shake: "shake 0.5s ease-in-out infinite",
         slideUp: "slideUp 0.25s ease-out",
         glowPulse: "glowPulse 2.2s ease-in-out infinite",
+        slideInHold: "slideInHold 0.28s cubic-bezier(0.22, 1, 0.36, 1)",
+        fadeOutHold: "fadeOutHold 0.32s ease-in forwards",
+        shimmer: "shimmer 1.4s ease-in-out infinite",
+        tickPulse: "tickPulse 1s ease-out",
       },
     },
   },

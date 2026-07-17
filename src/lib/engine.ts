@@ -13,13 +13,26 @@
 
 import {
   HOLD_DURATION_MS,
+  OFFER_DURATION_MS,
   type Hold,
   type Order,
   type Product,
   type ProductStatus,
+  type QueueInfo,
 } from "./types";
 
 // --- Internal records (server-only; never leave the engine as-is) -----------
+
+/**
+ * A live Second-Chance offer: the front-of-queue user's exclusive 15s window.
+ * While it exists it ESCROWS one unit — that unit is subtracted from public
+ * `available` so nobody else can grab it until the offer is claimed or expires.
+ */
+interface Offer {
+  userId: string;
+  createdAt: number;
+  expiresAt: number;
+}
 
 interface ProductRecord {
   id: string;
@@ -35,6 +48,10 @@ interface ProductRecord {
   watchers: number;
   /** Force sold-out at seed regardless of stock math (the 2 seeded sold-outs). */
   seededSoldOut: boolean;
+  /** Second-Chance Queue: FIFO userIds waiting (excludes anyone with the active offer). */
+  queue: string[];
+  /** The current exclusive offer for this product, if any (escrows one unit). */
+  offer: Offer | null;
 }
 
 interface EngineState {
@@ -51,7 +68,7 @@ interface EngineState {
 // ----------------------------------------------------------------------------
 
 function seedProducts(bootAt: number): ProductRecord[] {
-  const defs: Array<Omit<ProductRecord, "dropsAt" | "soldToSim">> = [
+  const defs: Array<Omit<ProductRecord, "dropsAt" | "soldToSim" | "queue" | "offer">> = [
     {
       id: "volt-runner",
       name: "Volt Runner OG",
@@ -168,6 +185,8 @@ function seedProducts(bootAt: number): ProductRecord[] {
     ...d,
     dropsAt: bootAt + d.dropOffsetMs,
     soldToSim: 0,
+    queue: [],
+    offer: null,
   }));
 }
 
@@ -224,12 +243,37 @@ function statusFor(p: ProductRecord, available: number, nowMs: number): ProductS
   return "live";
 }
 
+/** One unit is escrowed while an active offer exists (kept out of public stock). */
+function offerReservedFor(p: ProductRecord): number {
+  return p.offer ? 1 : 0;
+}
+
 function availableFor(p: ProductRecord): number {
-  const raw = p.totalStock - p.soldToSim - heldQtyFor(p.id);
+  const raw = p.totalStock - p.soldToSim - heldQtyFor(p.id) - offerReservedFor(p);
   return Math.max(0, raw);
 }
 
-function toProduct(p: ProductRecord, nowMs: number): Product {
+/** Build the requesting user's queue standing for a product (undefined if no user). */
+function queueInfoFor(
+  p: ProductRecord,
+  userId: string | undefined,
+  nowMs: number,
+): QueueInfo | undefined {
+  if (!userId) return undefined;
+  const hasOffer = p.offer?.userId === userId;
+  const offerSecondsLeft =
+    hasOffer && p.offer ? Math.max(0, Math.ceil((p.offer.expiresAt - nowMs) / 1000)) : 0;
+  const idx = p.queue.indexOf(userId);
+  return {
+    length: p.queue.length,
+    queued: idx !== -1,
+    position: idx !== -1 ? idx + 1 : null,
+    hasOffer,
+    offerSecondsLeft,
+  };
+}
+
+function toProduct(p: ProductRecord, nowMs: number, userId?: string): Product {
   const available = availableFor(p);
   return {
     id: p.id,
@@ -242,6 +286,7 @@ function toProduct(p: ProductRecord, nowMs: number): Product {
     available,
     watchers: p.watchers,
     status: statusFor(p, available, nowMs),
+    queue: queueInfoFor(p, userId, nowMs),
   };
 }
 
@@ -259,6 +304,47 @@ function sweep(nowMs: number): void {
   for (const [id, h] of s.holds) {
     if (h.expiresAt <= nowMs) s.holds.delete(id);
   }
+  // Second-Chance Queue is enforced in the SAME lazy pass, right after holds
+  // are reclaimed: expire stale offers first, then (re)offer any free stock to
+  // the front of each product's queue before it can return to public stock.
+  expireOffers(nowMs);
+  promoteQueues(nowMs);
+}
+
+/**
+ * Expire unclaimed 15s offers. The front user forfeits their turn: they're
+ * dropped from the queue and the escrowed unit is released (promoteQueues will
+ * immediately re-offer it to the next person, or let it go public if none).
+ */
+function expireOffers(nowMs: number): void {
+  const s = getState();
+  for (const p of s.products) {
+    if (p.offer && p.offer.expiresAt <= nowMs) {
+      p.offer = null; // escrow released
+    }
+  }
+}
+
+/**
+ * For each product with waiting users and NO active offer, if a unit is now
+ * free, hand the front user an exclusive 15s offer that escrows that unit.
+ * This is what makes freed stock route through the queue before going public.
+ */
+function promoteQueues(nowMs: number): void {
+  const s = getState();
+  for (const p of s.products) {
+    if (p.offer) continue; // one offer per product at a time
+    if (p.queue.length === 0) continue;
+    // Free-but-not-yet-escrowed units. (offerReservedFor is 0 here since no offer.)
+    const freeStock = p.totalStock - p.soldToSim - heldQtyFor(p.id);
+    if (freeStock <= 0) continue;
+    const userId = p.queue.shift()!; // front of the FIFO
+    p.offer = {
+      userId,
+      createdAt: nowMs,
+      expiresAt: nowMs + OFFER_DURATION_MS,
+    };
+  }
 }
 
 /**
@@ -271,7 +357,8 @@ function simulateContention(nowMs: number): void {
     if (p.seededSoldOut) continue;
     if (nowMs < p.dropsAt) continue; // not live yet
     const held = heldQtyFor(p.id);
-    const freeStock = p.totalStock - p.soldToSim - held;
+    // Never eat into active holds OR a unit escrowed for a Second-Chance offer.
+    const freeStock = p.totalStock - p.soldToSim - held - offerReservedFor(p);
     if (freeStock <= 0) continue;
     const chance = 0.15 + Math.random() * 0.05; // 15–20%
     if (Math.random() < chance) {
@@ -297,12 +384,15 @@ export function now(): number {
   return Date.now();
 }
 
-export function listProducts(): Product[] {
+export function listProducts(userId?: string): Product[] {
   const nowMs = now();
   sweep(nowMs);
   simulateContention(nowMs);
   driftWatchers();
-  return getState().products.map((p) => toProduct(p, nowMs));
+  // Contention/drift can free or consume stock; re-run the queue pass so offers
+  // reflect the freshest state within this same request.
+  promoteQueues(nowMs);
+  return getState().products.map((p) => toProduct(p, nowMs, userId));
 }
 
 export type PlaceHoldResult =
@@ -418,4 +508,102 @@ export function checkout(holdIds: string[]): CheckoutResult {
 
   s.orders.push(order);
   return { ok: true, order };
+}
+
+// ----------------------------------------------------------------------------
+// Second-Chance Queue — public API
+//
+// All mutations run a sweep first so offers/queues are current before we act.
+// The 15s offer window is created and expired ENTIRELY here in the engine; the
+// UI only reflects state it reads back.
+// ----------------------------------------------------------------------------
+
+export type QueueResult =
+  | { ok: true; queue: QueueInfo }
+  | { ok: false; code: "NOT_SOLD_OUT" | "HOLD_NOT_FOUND" | "BAD_REQUEST"; message: string };
+
+/** Join the FIFO waitlist for a SOLD-OUT product. Idempotent per user. */
+export function joinQueue(productId: string, userId: string): QueueResult {
+  const nowMs = now();
+  sweep(nowMs);
+
+  if (!userId) return { ok: false, code: "BAD_REQUEST", message: "Missing user id." };
+  const p = findProduct(productId);
+  if (!p) return { ok: false, code: "HOLD_NOT_FOUND", message: "Product not found." };
+
+  const available = availableFor(p);
+  const status = statusFor(p, available, nowMs);
+  // Only sold-out products have a waitlist. If it's live/available, no queue.
+  if (status !== "sold_out") {
+    return { ok: false, code: "NOT_SOLD_OUT", message: "This drop isn't sold out — just hold it." };
+  }
+
+  // Already has the active offer, or already queued → idempotent no-op success.
+  const alreadyOffered = p.offer?.userId === userId;
+  if (!alreadyOffered && !p.queue.includes(userId)) {
+    p.queue.push(userId);
+  }
+  return { ok: true, queue: queueInfoFor(p, userId, nowMs)! };
+}
+
+/** Leave the queue. If the user holds the active offer, forfeit it (release escrow). */
+export function leaveQueue(productId: string, userId: string): QueueResult {
+  const nowMs = now();
+  sweep(nowMs);
+
+  if (!userId) return { ok: false, code: "BAD_REQUEST", message: "Missing user id." };
+  const p = findProduct(productId);
+  if (!p) return { ok: false, code: "HOLD_NOT_FOUND", message: "Product not found." };
+
+  p.queue = p.queue.filter((u) => u !== userId);
+  if (p.offer?.userId === userId) {
+    p.offer = null; // forfeit the exclusive window; escrow released
+    promoteQueues(nowMs); // hand it to the next person immediately, if any
+  }
+  return { ok: true, queue: queueInfoFor(p, userId, nowMs)! };
+}
+
+export type ClaimResult =
+  | { ok: true; hold: Hold }
+  | { ok: false; code: "NO_OFFER" | "HOLD_NOT_FOUND"; message: string };
+
+/**
+ * Claim the exclusive offer → convert the escrowed unit into a normal 60s hold.
+ * Net stock effect is identical to a regular hold: the escrow simply becomes the
+ * hold's reserved unit, so `available` is unchanged by the conversion.
+ */
+export function claimOffer(productId: string, userId: string): ClaimResult {
+  const nowMs = now();
+  sweep(nowMs);
+
+  const p = findProduct(productId);
+  if (!p) return { ok: false, code: "HOLD_NOT_FOUND", message: "Product not found." };
+
+  if (!p.offer || p.offer.userId !== userId || p.offer.expiresAt <= nowMs) {
+    return { ok: false, code: "NO_OFFER", message: "Your reservation window has passed." };
+  }
+
+  // Consume the offer and mint a hold for the escrowed unit.
+  p.offer = null;
+  const hold: Hold = {
+    id: nextId("hold"),
+    productId: p.id,
+    productName: p.name,
+    colorway: p.colorway,
+    price: p.price,
+    qty: 1,
+    createdAt: nowMs,
+    expiresAt: nowMs + HOLD_DURATION_MS,
+  };
+  getState().holds.set(hold.id, hold);
+  return { ok: true, hold };
+}
+
+/** Read a single product's queue standing for a user (after a sweep). */
+export function getQueueState(productId: string, userId: string): QueueInfo | null {
+  const nowMs = now();
+  sweep(nowMs);
+  const p = findProduct(productId);
+  if (!p) return null;
+  return queueInfoFor(p, userId, nowMs) ?? null;
 }

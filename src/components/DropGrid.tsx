@@ -2,7 +2,7 @@
 
 import { useStore } from "@/store/useStore";
 import { ProductCard } from "./ProductCard";
-import { EmptyState, ErrorState, LoadingState } from "./States";
+import { EmptyState, ErrorState, LoadingGrid } from "./States";
 
 export function DropGrid() {
   const products = useStore((s) => s.products);
@@ -11,7 +11,7 @@ export function DropGrid() {
   const loadProducts = useStore((s) => s.loadProducts);
 
   if (state === "loading" || state === "idle") {
-    return <LoadingState />;
+    return <LoadingGrid />;
   }
 
   if (state === "error") {
