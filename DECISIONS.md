@@ -18,7 +18,8 @@ the pool."_ The user is never left guessing why an item disappeared.
 `serverNow`. On each response the store computes `drift = serverNow − Date.now()`
 and exposes `serverTime() = Date.now() + drift`. All countdowns render from
 `serverTime()`, never raw `Date.now()`. A client with a skewed clock still sees
-timers that agree with when the server will actually expire a hold.
+timers that agree with when the server will actually expire a hold — this also
+governs the 15s second-chance offer countdown (see §7).
 
 ### 3. Optimistic UI vs wait-for-server when placing a hold
 
@@ -27,7 +28,9 @@ other users), so optimistically showing a hold that the server then rejects woul
 be a lie about scarce inventory. We show a pending "Holding…" state and only add
 the hold once the server confirms. **Release is optimistic** — it's user-initiated
 and only ever frees stock, so it's safe to apply locally first (with rollback if
-the request fails).
+the request fails). Claiming a second-chance offer follows the **wait-for-server**
+rule for the same reason: the exclusive window can lapse, so we confirm before
+showing the resulting hold.
 
 ### 4. Zustand vs Context for this app
 
@@ -36,19 +39,21 @@ the request fails).
 2s). Context would re-render the whole subtree on every state change; Zustand's
 selector subscriptions mean a component re-renders only when the specific slice it
 reads changes. It also gives us a clean place for cross-cutting concerns (drift,
-toasts, cross-tab sync) without prop-drilling or nested providers.
+toasts, cross-tab sync, queue/offer state) without prop-drilling or nested
+providers.
 
 ### 5. What a user with two open tabs experiences
 
-`holdIds` are persisted to `localStorage`. Each tab listens for the `storage`
-event; when one tab places or releases a hold, the other re-syncs its `holdIds`
-and runs `refreshHolds()` to reconcile against the server. Because the **server is
-authoritative**, both tabs converge on the same truth — a hold created in tab A
-appears in tab B, and an expiry seen by one is reflected in the other on the next
-poll. No double-spending of stock: the engine's availability math counts all live
-holds regardless of which tab created them.
+`holdIds` — and a stable per-browser `userId` used for the queue — are persisted to
+`localStorage`. Each tab listens for the `storage` event; when one tab places or
+releases a hold, the other re-syncs its `holdIds` and runs `refreshHolds()` to
+reconcile against the server. Because the **server is authoritative**, both tabs
+converge on the same truth — a hold created in tab A appears in tab B, and an
+expiry seen by one is reflected in the other on the next poll. No double-spending
+of stock: the engine's availability math counts all live holds regardless of which
+tab created them.
 
-### 6. Extra decision — lazy expiry sweep over per-hold timers
+### 6. Lazy expiry sweep over per-hold timers
 
 Expiry is enforced by a **lazy `sweep()`** that runs at the top of every engine
 read/mutation, deleting any hold whose `expiresAt <= now`. This is preferred over
@@ -56,4 +61,51 @@ per-hold `setTimeout`s because: (a) serverless/route-handler invocations don't
 keep long-lived timers alive reliably, (b) it keeps the engine stateless between
 calls apart from the data itself, and (c) correctness only depends on _someone_
 reading the engine — which the ~2s polls guarantee. The result is deterministic
-and hot-reload-safe, with no dangling timers to leak.
+and hot-reload-safe, with no dangling timers to leak. The **second-chance offer's
+15s window is expired in this same sweep** — no separate timer subsystem.
+
+### 7. Second-Chance Queue — how freed stock is routed, and where the 15s window lives
+
+When a sold-out product's stock frees up (a hold expires or is released), that unit
+must not silently return to the public pool if someone is waiting for it. The
+design:
+
+- **FIFO queue per product**, stored server-side in the engine. Users join only
+  when a product is `sold_out`.
+- **Offer = escrow.** When the sweep frees a unit and a queue exists, the engine
+  hands the front user an `Offer` with a 15s `expiresAt` and _escrows_ that unit:
+  `available = totalStock − soldToSim − held − offerReserved`. So the freed unit is
+  provably kept out of public availability — and out of reach of the contention
+  bots — until the offer is claimed or expires.
+- **Enforced by the engine, never the UI.** `expireOffers()` (offer lapsed → drop
+  the front user, release the escrow) and `promoteQueues()` (re-offer to the next
+  person, or let the unit go public if the queue is now empty) both run inside the
+  same lazy sweep as hold expiry. The client only _reflects_ `QueueInfo` it reads
+  back (`length`, `position`, `hasOffer`, `offerSecondsLeft`); it can't grant or
+  extend a window.
+- **Claim = a normal 60s hold.** `claimOffer()` converts the escrowed unit into an
+  ordinary hold, so the rest of the flow (timer, checkout, cross-tab) is unchanged.
+  Net stock effect of the conversion is zero — the escrow simply becomes the hold's
+  reserved unit.
+
+This keeps the "one server-side source of truth" honest: the contested, time-based
+decision (who gets the freed unit, and for how long) lives entirely in the engine.
+
+### 8. Identifying the "user" without auth
+
+The queue needs a stable identity to know whose turn it is. Rather than add auth,
+we mint a per-browser `userId` (`dropday.userId`) in `localStorage` on first load
+and reuse it across polls, tabs, and reloads. It's sent to `/api/products?userId=`
+so each product response carries _that user's_ queue standing, and to the
+join/leave/claim endpoints. Good enough for a demo; swapping in real auth means
+replacing one id source, nothing else.
+
+### 9. Micro-interactions — tasteful, and always motion-safe
+
+Polish is layered on without touching state logic: product-card hover lift +
+accent glow, holds that **slide in and fade out** (a local presence layer keeps a
+released/expired row mounted ~320ms to animate before unmounting, never mutating
+the store), a **skeleton-shimmer** loading grid that mirrors the card layout, and a
+gentle per-second pulse on live countdowns. Every animation is gated behind
+`motion-safe:` and the global `prefers-reduced-motion` kill-switch, so the whole
+experience degrades cleanly to static for users who ask for reduced motion.
