@@ -6,7 +6,7 @@ import { useStore } from "@/store/useStore";
 import { useServerTick } from "@/lib/clock";
 import { HoldTimer, PANIC_MS } from "./HoldTimer";
 import { EmptyState } from "./States";
-import type { Hold } from "@/lib/types";
+import type { Hold } from "@dropday/shared";
 
 const EXIT_MS = 320; // must match the fadeOutHold animation duration
 

@@ -7,9 +7,9 @@ import { StoreBootstrap } from "@/components/StoreBootstrap";
 import { HoldTimer } from "@/components/HoldTimer";
 import { Toasts } from "@/components/Toasts";
 import { EmptyState, Spinner } from "@/components/States";
-import { api, ApiFailure } from "@/lib/api";
+import { api, ApiFailure } from "@dropday/shared";
 import { useStore } from "@/store/useStore";
-import type { Order } from "@/lib/types";
+import type { Order } from "@dropday/shared";
 
 type Phase =
   | { kind: "idle" }

@@ -19,7 +19,7 @@ import {
   type Product,
   type ProductStatus,
   type QueueInfo,
-} from "./types";
+} from "@dropday/shared";
 
 // --- Internal records (server-only; never leave the engine as-is) -----------
 

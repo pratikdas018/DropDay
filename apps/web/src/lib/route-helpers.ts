@@ -6,7 +6,7 @@
 
 import { NextResponse } from "next/server";
 import { now } from "./engine";
-import type { ApiEnvelope, ApiError, ApiErrorCode } from "./types";
+import type { ApiEnvelope, ApiError, ApiErrorCode } from "@dropday/shared";
 
 /** Sleep for a random duration in [min, max] ms to simulate network latency. */
 export function latency(min: number, max: number): Promise<void> {

@@ -1,7 +1,7 @@
 "use client";
 
 import { fmtCountdown, useServerTick } from "@/lib/clock";
-import type { Hold } from "@/lib/types";
+import type { Hold } from "@dropday/shared";
 
 const PANIC_MS = 10_000; // final 10 seconds = panic mode
 

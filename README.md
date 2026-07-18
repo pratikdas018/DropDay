@@ -13,13 +13,50 @@ when stock frees up.
 ## Run it (≤3 commands)
 
 ```bash
-pnpm install
-pnpm dev
+pnpm install   # installs every workspace package
+pnpm dev       # turbo runs the web app
 ```
 
 Then open <http://localhost:3000>.
 
-Other scripts: `pnpm build`, `pnpm start`, `pnpm lint`.
+Other root scripts (all via Turborepo): `pnpm build`, `pnpm lint`, `pnpm typecheck`.
+To target one package: `pnpm --filter @dropday/web <script>`.
+
+---
+
+## Monorepo layout
+
+pnpm workspaces + Turborepo. Two packages, one genuinely shared:
+
+```text
+DropDay/
+├─ apps/
+│  └─ web/                  @dropday/web — the Next.js 14 app
+│     └─ src/
+│        ├─ app/            routes + Route Handlers (the HTTP edge)
+│        ├─ components/     client UI
+│        ├─ lib/            engine.ts · route-helpers.ts · clock.ts (server/app-only)
+│        └─ store/          Zustand store
+├─ packages/
+│  └─ shared/               @dropday/shared — reused by the app
+│     └─ src/
+│        ├─ types.ts        THE CONTRACT (Product, Hold, Order, QueueInfo, ApiEnvelope…)
+│        ├─ api.ts          THE SINGLE API BOUNDARY (only place that touches fetch)
+│        └─ index.ts        public surface
+├─ pnpm-workspace.yaml
+└─ turbo.json               dev / build / lint / typecheck pipelines
+```
+
+**What's shared and why.** `@dropday/shared` holds the two things both sides of the
+wire genuinely agree on: the **domain contract** (`types.ts` — imported by the
+engine, the route handlers, the store, and the UI alike) and the **API boundary**
+(`api.ts` — the single service module the client talks through). The server engine
+and route helpers stay in the app, and import their types from the shared package —
+so there is exactly one definition of the contract, with no duplicated copies.
+
+The package ships raw TypeScript (no build step); Next compiles it via
+`transpilePackages: ["@dropday/shared"]`, and `@dropday/shared` resolves through
+both the workspace symlink and a tsconfig path.
 
 ---
 
@@ -38,19 +75,19 @@ means each cold start (and each serverless instance) can begin from the seed sta
 One idea drives the whole app: **there is exactly one source of truth — a
 server-side engine — and the UI only ever visualizes it.**
 
-```
+```text
 Browser (client components)
   └─ Zustand store  ──────────────┐  drift = serverNow − Date.now()
        │ selectors, polling       │  serverTime() = Date.now() + drift
        ▼                          │
-  src/lib/api.ts  ── THE ONLY place that touches fetch/HTTP
+  @dropday/shared (api.ts)  ── THE ONLY place that touches fetch/HTTP
        │                          │
        ▼   (HTTP + latency + occasional transient failures)
   Route Handlers  /api/products · /api/holds · /api/holds/[id] · /api/checkout
                   /api/queue · /api/queue/claim
        │                          │
        ▼                          │
-  src/lib/engine.ts  ── in-memory source of truth (on globalThis)
+  apps/web/src/lib/engine.ts  ── in-memory source of truth (on globalThis)
        • lazy sweep() enforces 60s hold expiry on every read/mutation
        • simulateContention() — bots eat live stock over time
        • driftWatchers() — hype meter drifts
@@ -62,14 +99,14 @@ Browser (client components)
 
 | File | Responsibility |
 | --- | --- |
-| `src/lib/types.ts` | The shared contract — `Product`, `Hold`, `Order`, `ApiEnvelope<T>`, `ApiError`. |
-| `src/lib/engine.ts` | In-memory engine. Holds, stock math, expiry sweep, bot contention, watcher drift. |
-| `src/lib/route-helpers.ts` | `latency()`, `maybeFail()`, `ok()`/`fail()` envelope wrappers. |
-| `src/app/api/**` | Real Route Handlers (`dynamic = "force-dynamic"`) — the HTTP edge. |
-| `src/lib/api.ts` | **The single API boundary.** Swap to a real backend by changing `BASE`. |
-| `src/store/useStore.ts` | Zustand: products, holds, drift, toasts, cross-tab sync. |
-| `src/lib/clock.ts` | `useServerTick()` + `fmtCountdown()`. Countdowns read server-adjusted time. |
-| `src/components/**`, `src/app/**` | Client UI: drop grid, holds panel, timers, toasts, checkout. |
+| `packages/shared/src/types.ts` | **Shared contract** — `Product`, `Hold`, `Order`, `QueueInfo`, `ApiEnvelope<T>`, `ApiError`. |
+| `packages/shared/src/api.ts` | **The single API boundary.** Swap to a real backend by changing `BASE`. |
+| `apps/web/src/lib/engine.ts` | In-memory engine. Holds, stock math, expiry sweep, queue/offers, bot contention, watcher drift. |
+| `apps/web/src/lib/route-helpers.ts` | `latency()`, `maybeFail()`, `ok()`/`fail()` envelope wrappers. |
+| `apps/web/src/app/api/**` | Real Route Handlers (`dynamic = "force-dynamic"`) — the HTTP edge. |
+| `apps/web/src/store/useStore.ts` | Zustand: products, holds, queue/offers, drift, toasts, cross-tab sync. |
+| `apps/web/src/lib/clock.ts` | `useServerTick()` + `fmtCountdown()`. Countdowns read server-adjusted time. |
+| `apps/web/src/components/**` | Client UI: drop grid, holds panel, timers, toasts, checkout. |
 
 ### Key behaviors
 

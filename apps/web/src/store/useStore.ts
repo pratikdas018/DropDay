@@ -11,8 +11,8 @@
 "use client";
 
 import { create } from "zustand";
-import { api, ApiFailure } from "@/lib/api";
-import type { Hold, Product } from "@/lib/types";
+import { api, ApiFailure } from "@dropday/shared";
+import type { Hold, Product } from "@dropday/shared";
 
 const HOLD_IDS_KEY = "dropday.holdIds";
 const USER_ID_KEY = "dropday.userId";

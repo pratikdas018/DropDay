@@ -3,8 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { fmtCountdown, useServerTick } from "@/lib/clock";
 import { useStore } from "@/store/useStore";
-import { OFFER_DURATION_MS } from "@/lib/types";
-import type { Product } from "@/lib/types";
+import { OFFER_DURATION_MS } from "@dropday/shared";
+import type { Product } from "@dropday/shared";
 
 const HYPE_THRESHOLD = 300; // watchers above this = "Hyped"
 
