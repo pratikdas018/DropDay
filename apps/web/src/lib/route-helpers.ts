@@ -19,9 +19,28 @@ export function maybeFail(rate: number): boolean {
   return Math.random() < rate;
 }
 
+/**
+ * CORS headers. The API is a public read/write demo surface with no cookies or
+ * credentials, and the Expo app calls it from a different origin, so a permissive
+ * policy is appropriate here. (Same-origin web requests are unaffected.)
+ */
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+} as const;
+
+/** Preflight responder — re-export as `OPTIONS` from any route that needs it. */
+export function preflight(): NextResponse {
+  return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
+}
+
 /** Wrap payload in the envelope with a fresh serverNow. */
 export function ok<T>(data: T, status = 200): NextResponse<ApiEnvelope<T>> {
-  return NextResponse.json({ data, serverNow: now() }, { status });
+  return NextResponse.json(
+    { data, serverNow: now() },
+    { status, headers: CORS_HEADERS },
+  );
 }
 
 /** Structured error response, also carrying serverNow. */
@@ -33,6 +52,6 @@ export function fail(
 ): NextResponse<ApiError> {
   return NextResponse.json(
     { error: message, code, serverNow: now(), ...extra },
-    { status },
+    { status, headers: CORS_HEADERS },
   );
 }

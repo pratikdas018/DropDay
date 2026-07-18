@@ -1,8 +1,10 @@
 import { NextRequest } from "next/server";
 import { releaseHold } from "@/lib/engine";
-import { fail, latency, maybeFail, ok } from "@/lib/route-helpers";
+import { fail, latency, maybeFail, ok, preflight } from "@/lib/route-helpers";
 
 export const dynamic = "force-dynamic";
+
+export const OPTIONS = preflight;
 
 // DELETE /api/holds/[id] -> release a hold (return stock to the pool)
 export async function DELETE(

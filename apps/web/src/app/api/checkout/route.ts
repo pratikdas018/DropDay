@@ -1,8 +1,10 @@
 import { NextRequest } from "next/server";
 import { checkout } from "@/lib/engine";
-import { fail, latency, maybeFail, ok } from "@/lib/route-helpers";
+import { fail, latency, maybeFail, ok, preflight } from "@/lib/route-helpers";
 
 export const dynamic = "force-dynamic";
+
+export const OPTIONS = preflight;
 
 // POST /api/checkout  { holdIds } -> order, or HOLD_EXPIRED with the bad ids
 export async function POST(req: NextRequest) {

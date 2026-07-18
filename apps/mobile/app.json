@@ -1,0 +1,24 @@
+{
+  "expo": {
+    "name": "Drop Day",
+    "slug": "dropday-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0A0A0B",
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#0A0A0B"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.dropday.mobile"
+    },
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}

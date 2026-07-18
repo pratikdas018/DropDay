@@ -14,6 +14,15 @@ dist
 # turborepo
 .turbo
 
+# expo
+.expo/
+.expo-shared/
+*.jks
+*.p8
+*.p12
+*.mobileprovision
+*.orig.*
+
 # misc
 .DS_Store
 *.pem

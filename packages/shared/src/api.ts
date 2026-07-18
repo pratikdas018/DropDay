@@ -15,8 +15,30 @@ import type {
   QueueInfo,
 } from "./types";
 
-/** Point this at a real backend to swap it out. Empty = same-origin routes. */
-const BASE = "";
+/**
+ * Point this at a real backend to swap it out. Empty = same-origin routes,
+ * which is what the web app uses.
+ *
+ * Non-browser consumers (the Expo app) have no same-origin to fall back on, so
+ * they call `configureApi({ baseUrl })` once at startup with an absolute URL.
+ * The request/response contract is identical either way.
+ */
+let BASE = "";
+
+export interface ApiConfig {
+  /** Absolute origin of the backend, e.g. "https://drop-day.vercel.app". No trailing slash. */
+  baseUrl: string;
+}
+
+/** Set the API origin. Call once at app startup, before any api.* call. */
+export function configureApi(config: ApiConfig): void {
+  BASE = config.baseUrl.replace(/\/+$/, "");
+}
+
+/** Current API origin ("" = same-origin). */
+export function getApiBaseUrl(): string {
+  return BASE;
+}
 
 export interface ApiResult<T> {
   data: T;
@@ -47,7 +69,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<ApiResult<T
     res = await fetch(`${BASE}${path}`, {
       ...init,
       headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
-      cache: "no-store",
+      // React Native's fetch has no HTTP cache and rejects this option, so only
+      // send it where it means something (the browser).
+      ...(BASE === "" ? { cache: "no-store" as RequestCache } : {}),
     });
   } catch {
     // Network-level failure: normalize into an ApiFailure the store understands.

@@ -22,23 +22,39 @@ Then open <http://localhost:3000>.
 Other root scripts (all via Turborepo): `pnpm build`, `pnpm lint`, `pnpm typecheck`.
 To target one package: `pnpm --filter @dropday/web <script>`.
 
+### Mobile (Expo)
+
+```bash
+pnpm --filter @dropday/mobile start
+```
+
+Then scan the QR code with **Expo Go**, or press `a` / `i` / `w` for
+Android / iOS / web. It defaults to the deployed backend; point it elsewhere with:
+
+```bash
+EXPO_PUBLIC_API_BASE_URL=http://<your-lan-ip>:3000 pnpm --filter @dropday/mobile start
+```
+
 ---
 
 ## Monorepo layout
 
-pnpm workspaces + Turborepo. Two packages, one genuinely shared:
+pnpm workspaces + Turborepo. Two apps, one genuinely shared package:
 
 ```text
 DropDay/
 ├─ apps/
-│  └─ web/                  @dropday/web — the Next.js 14 app
-│     └─ src/
-│        ├─ app/            routes + Route Handlers (the HTTP edge)
-│        ├─ components/     client UI
-│        ├─ lib/            engine.ts · route-helpers.ts · clock.ts (server/app-only)
-│        └─ store/          Zustand store
+│  ├─ web/                  @dropday/web — the Next.js 14 app (+ the backend)
+│  │  └─ src/
+│  │     ├─ app/            routes + Route Handlers (the HTTP edge)
+│  │     ├─ components/     client UI
+│  │     ├─ lib/            engine.ts · route-helpers.ts · clock.ts (server/app-only)
+│  │     └─ store/          Zustand store
+│  └─ mobile/               @dropday/mobile — Expo / React Native
+│     ├─ App.tsx            the one screen: scrollable drop list
+│     └─ src/               config.ts (API base URL) · theme.ts
 ├─ packages/
-│  └─ shared/               @dropday/shared — reused by the app
+│  └─ shared/               @dropday/shared — reused by BOTH apps
 │     └─ src/
 │        ├─ types.ts        THE CONTRACT (Product, Hold, Order, QueueInfo, ApiEnvelope…)
 │        ├─ api.ts          THE SINGLE API BOUNDARY (only place that touches fetch)
@@ -47,12 +63,18 @@ DropDay/
 └─ turbo.json               dev / build / lint / typecheck pipelines
 ```
 
-**What's shared and why.** `@dropday/shared` holds the two things both sides of the
-wire genuinely agree on: the **domain contract** (`types.ts` — imported by the
-engine, the route handlers, the store, and the UI alike) and the **API boundary**
-(`api.ts` — the single service module the client talks through). The server engine
-and route helpers stay in the app, and import their types from the shared package —
-so there is exactly one definition of the contract, with no duplicated copies.
+**What's shared and why.** `@dropday/shared` holds the two things every client
+genuinely agrees on: the **domain contract** (`types.ts` — imported by the engine,
+the route handlers, the store, the web UI, _and_ the mobile screen) and the **API
+boundary** (`api.ts` — the single service module all clients talk through). The
+server engine and route helpers stay in the web app and import their types from the
+shared package — so there is exactly one definition of the contract, with no
+duplicated copies anywhere.
+
+**Web and mobile call the same `api.getProducts()`.** The only difference is the
+origin: the web app uses same-origin route handlers (`BASE = ""`), while the native
+app has no origin and so calls `configureApi({ baseUrl })` once at startup. The
+request/response contract is identical.
 
 The package ships raw TypeScript (no build step); Next compiles it via
 `transpilePackages: ["@dropday/shared"]`, and `@dropday/shared` resolves through

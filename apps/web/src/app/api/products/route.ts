@@ -1,8 +1,10 @@
 import { NextRequest } from "next/server";
 import { listProducts } from "@/lib/engine";
-import { fail, latency, maybeFail, ok } from "@/lib/route-helpers";
+import { fail, latency, maybeFail, ok, preflight } from "@/lib/route-helpers";
 
 export const dynamic = "force-dynamic";
+
+export const OPTIONS = preflight;
 
 // GET /api/products?userId=xyz
 // userId is optional; when present each product carries that user's queue info.

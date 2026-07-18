@@ -1,8 +1,10 @@
 import { NextRequest } from "next/server";
 import { claimOffer } from "@/lib/engine";
-import { fail, latency, maybeFail, ok } from "@/lib/route-helpers";
+import { fail, latency, maybeFail, ok, preflight } from "@/lib/route-helpers";
 
 export const dynamic = "force-dynamic";
+
+export const OPTIONS = preflight;
 
 // POST /api/queue/claim  { productId, userId }
 // Convert an active exclusive offer into a normal 60s hold.
