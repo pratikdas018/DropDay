@@ -10,6 +10,43 @@ when stock frees up.
 
 ---
 
+## What this project demonstrates
+
+A **Next.js 14 web app** and an **Expo mobile app** in one pnpm/Turborepo monorepo,
+both talking to a real backend through a **single shared API boundary** — no
+duplicated types, no duplicated fetch code.
+
+The interesting problem is **contested, time-based state**: stock that several
+shoppers (and simulated bots) race for, reservations that expire on a server clock,
+and a waitlist that hands freed inventory to the next person in line for exactly 15
+seconds. All of that is decided server-side; the UI only visualizes it.
+
+| | |
+| --- | --- |
+| **Stack** | Next.js 14 · React · TypeScript · Zustand · Tailwind · Expo / React Native |
+| **Tooling** | pnpm workspaces · Turborepo |
+| **Backend** | Real Next.js Route Handlers over an in-memory engine (the bonus tier, not a mock) |
+| **Wildcards** | Hype Meter · Panic Mode · **Second-Chance Queue** |
+
+### Where to look first
+
+| If you want to see… | Open |
+| --- | --- |
+| The single API boundary (the only `fetch()` in the repo) | `packages/shared/src/api.ts` |
+| The domain contract shared by every layer | `packages/shared/src/types.ts` |
+| The source of truth — expiry sweep, stock math, queue/offers | `apps/web/src/lib/engine.ts` |
+| The same boundary reused by a second client | `apps/mobile/App.tsx` |
+| Why things are built this way | **DECISIONS.md** |
+
+### The docs
+
+- **README.md** (this file) — what it is, how to run it, key behaviors.
+- **ARCHITECTURE.md** — layered diagram, data-flow walkthroughs, file map.
+- **DECISIONS.md** — 11 decisions with rationale (the "why", including trade-offs).
+- **PRD.md** — the original requirements and what shipped against them.
+
+---
+
 ## Run it (≤3 commands)
 
 ```bash
